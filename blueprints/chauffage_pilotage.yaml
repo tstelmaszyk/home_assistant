@@ -1,0 +1,155 @@
+blueprint:
+  name: Pilotage chauffage
+  description: Gestion des différents modes de chauffage - Stop  Hors-gel  Auto confort Auto eco
+  domain: automation
+  source_url: https://github.com/tstelmaszyk/chauffage-home-assistant/blob/main/blueprint/chauffage_pilotage.yaml
+
+  input:
+    entity_consigne:
+      name: Consigne
+      description: Champs d'entrée de la température de consigne (input number).
+      selector:
+        entity:
+          domain: climate
+    entity_sauvegarde:
+      name: Sauvegarde
+      description: sauvegarde de la temperature
+      selector:
+        entity:
+          domain: input_number
+    entity_activation:
+      name: Activation ou non du chauffage
+      description: Bouton switch à creer pour activer ou non le chauffage (été/hivers, arrêt long vacances ....)
+      selector:
+        entity:
+          domain: input_boolean
+    entity_precense:
+      name: Precense ou non à la maison
+      description: Switch pour indiquer ou non la précense dans le domicile
+      selector:
+        entity:
+          domain: input_boolean
+    entity_planning:
+      name: Calendrier
+      description: Horraire de chauffe
+      selector:
+        entity:
+          domain: schedule
+    entity_fenetre:
+          name: Fenètre
+          description: Capteur d'ouverture de fenêtre (sensor)
+          selector:
+            entity:
+              domain: binary_sensor
+              device_class: opening
+
+alias: Pilotage chauffage
+description: ''
+trigger:
+  - platform: state
+    entity_id: !input entity_activation
+  - platform: state
+    entity_id: !input entity_precense
+  - platform: state
+    entity_id: !input entity_planning
+    id: trigger_planning
+  - platform: state
+    entity_id: !input entity_fenetre
+    id: trigger_fenetre
+
+action:
+  - alias: récupération des données
+    variables:
+      entity_consigne: !input entity_consigne
+      entity_sauvegarde: !input entity_sauvegarde
+      current_consigne: "{{ state_attr(entity_consigne, 'temperature') }}"
+      previus_consigne: '{{ states(entity_sauvegarde) }}'
+  - choose:
+      # ----- Mode Hors-gel
+      - conditions:
+          - condition: state
+            entity_id: !input entity_activation
+            state: "off"
+        sequence:
+          - service: climate.turn_off
+            target:
+              entity_id: !input entity_consigne
+      # ----- Mode absent
+      - conditions:
+          - condition: state
+            entity_id: !input entity_precense
+            state: "off"
+        sequence:
+          - service: climate.turn_on
+            target:
+              entity_id: !input entity_consigne
+          - service: climate.set_preset_mode
+            target:
+              entity_id: !input entity_consigne
+            data:
+              preset_mode: "away"
+      # ----- Fenetre to do turn Off
+      - conditions:
+          - alias: "A l'ouverture de la fenetre"
+            condition: and
+            conditions:
+              - condition: trigger
+                id: trigger_fenetre
+              - condition: state
+                entity_id: !input entity_fenetre
+                state: "on"
+        sequence:
+          - service: input_number.set_value
+            data_template:
+              entity_id: !input entity_sauvegarde
+              value: "{{ current_consigne }}"
+          - service: climate.turn_off
+            target:
+              entity_id: !input entity_consigne
+      - conditions:
+          - alias: "A la fermeture de la fenetre"
+            condition: and
+            conditions:
+              - condition: trigger
+                id: trigger_fenetre
+              - condition: state
+                entity_id: !input entity_fenetre
+                state: "off"
+        sequence:
+          - service: climate.set_temperature
+            data:
+              temperature: '{{previus_consigne}}'
+            target:
+              entity_id: !input entity_consigne
+          - service: climate.turn_on
+            target:
+              entity_id: !input entity_consigne
+      # ----- Mode Auto - eco
+      - conditions:
+          - condition: state
+            entity_id: !input entity_planning
+            state: "off"
+        sequence:
+          - service: climate.turn_on
+            target:
+              entity_id: !input entity_consigne
+          - service: climate.set_preset_mode
+            target:
+              entity_id: !input entity_consigne
+            data:
+              preset_mode: "eco"
+      # ----- Mode Auto - confort
+      - conditions:
+          - condition: state
+            entity_id: !input entity_planning
+            state: "on"
+        sequence:
+          - service: climate.turn_on
+            target:
+              entity_id: !input entity_consigne
+          - service: climate.set_preset_mode
+            target:
+              entity_id: !input entity_consigne
+            data:
+              preset_mode: "comfort"
+mode: single
